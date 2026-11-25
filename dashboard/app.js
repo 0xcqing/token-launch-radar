@@ -22,14 +22,14 @@
     q: '',
     category: 'all',
     chain: 'all',
-    tab: 'pre-token',
+    group: 'pre-token',
     sort: 'implied',
     dir: -1,
     watchOnly: false,
     selected: null
   };
 
-  var searchInput, categorySelect, chainSelect, watchToggle, tabButtons, countEl, boardMount;
+  var searchInput, chainSelect, watchToggle, groupButtons, countEl, boardMount, chipBar;
 
   // ---------------------------------------------------------------- formatters
 
@@ -62,6 +62,17 @@
     if (chains.length <= 2) return chains.join(', ');
     return chains.slice(0, 2).join(', ') + ' +' + (chains.length - 2);
   }
+  function stepCost(step) {
+    if (!step) return '';
+    if (step.cost === 'free' || step.cost_usd === null || step.cost_usd === undefined) return 'free';
+    if (typeof step.cost === 'string' && step.cost !== '') return step.cost;
+    return money(step.cost_usd);
+  }
+  function stepTime(step) {
+    if (!step) return '';
+    if (typeof step.time === 'string' && step.time !== '') return step.time;
+    return step.minutes + ' minute' + (step.minutes === 1 ? '' : 's');
+  }
 
   // ---------------------------------------------------------------- DOM helper
 
@@ -82,6 +93,7 @@
         if (key === 'class') node.className = value;
         else if (key === 'text') node.textContent = value;
         else if (key === 'html') node.innerHTML = value;
+        else if (key === 'style') node.setAttribute('style', value);
         else if (key.slice(0, 2) === 'on' && typeof value === 'function') node.addEventListener(key.slice(2), value);
         else if (value === true) node.setAttribute(key, '');
         else node.setAttribute(key, value);
@@ -97,14 +109,29 @@
 
   // ---------------------------------------------------------------- derived lists
 
+  var CATEGORY_LABELS = (function () {
+    var out = [];
+    var seen = {};
+    function add(label) {
+      if (!label || seen[label]) return;
+      seen[label] = true;
+      out.push(label);
+    }
+    (DATA.category_rules || []).forEach(function (rule) { add(rule.label); });
+    if (DATA.default_category) add(DATA.default_category.label);
+    (DATA.rows || []).forEach(function (r) { add(r.category_label); });
+    return out;
+  })();
+
   var CATEGORIES = (function () {
     var seen = {};
-    DATA.rows.concat(DATA.live).forEach(function (r) { seen[categoryOf(r)] = true; });
+    (DATA.rows || []).forEach(function (r) { seen[categoryOf(r)] = true; });
     return Object.keys(seen).sort();
   })();
+
   var CHAINS = (function () {
     var counts = {};
-    DATA.rows.forEach(function (r) {
+    (DATA.rows || []).forEach(function (r) {
       (r.chains || []).forEach(function (c) { counts[c] = (counts[c] || 0) + 1; });
     });
     return Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a] || a.localeCompare(b); });
@@ -117,35 +144,45 @@
     if (!raw) return;
     var params = new URLSearchParams(raw);
     if (params.get('q')) state.q = params.get('q');
+    var filter = params.get('filter') || params.get('group');
+    if (filter === 'live' || filter === 'pre-token' || filter === 'all') state.group = filter;
+    else if (filter) state.category = filter;
     if (params.get('cat')) state.category = params.get('cat');
     if (params.get('chain')) state.chain = params.get('chain');
-    if (params.get('tab') === 'live' || params.get('tab') === 'pre-token') state.tab = params.get('tab');
     if (params.get('sort')) state.sort = params.get('sort');
     if (params.get('dir') === '1' || params.get('dir') === '-1') state.dir = Number(params.get('dir'));
     if (params.get('watch') === '1') state.watchOnly = true;
-    if (params.get('p')) state.selected = params.get('p');
+    var open = params.get('open') || params.get('p');
+    if (open) state.selected = open;
+  }
+  function validSort(key) {
+    return ['rank', 'name', 'category', 'chains', 'implied', 'tvl', 'growth', 'age', 'mcap'].indexOf(key) >= 0;
+  }
+  function defaultSort(group) {
+    return group === 'live' ? 'mcap' : group === 'all' ? 'rank' : 'implied';
   }
   function normalizeState() {
-    if (state.tab !== 'live') state.tab = 'pre-token';
-    if (CATEGORIES.indexOf(state.category) < 0) state.category = 'all';
-    if (state.chain !== 'all' && CHAINS.indexOf(state.chain) < 0) state.chain = 'all';
-    if (['implied', 'name', 'category', 'chains', 'tvl', 'growth', 'age', 'mcap', 'rank'].indexOf(state.sort) < 0) {
-      state.sort = state.tab === 'live' ? 'mcap' : 'implied';
+    if (state.group !== 'live' && state.group !== 'pre-token' && state.group !== 'all') state.group = 'pre-token';
+    if (state.category !== 'all' && CATEGORY_LABELS.indexOf(state.category) < 0 && CATEGORIES.indexOf(state.category) < 0) {
+      state.category = 'all';
     }
-    if (state.tab === 'pre-token' && state.sort === 'mcap') state.sort = 'implied';
-    if (state.tab === 'live' && state.sort === 'implied') state.sort = 'mcap';
+    if (state.chain !== 'all' && CHAINS.indexOf(state.chain) < 0) state.chain = 'all';
+    if (!validSort(state.sort)) state.sort = defaultSort(state.group);
+    if (state.group === 'pre-token' && (state.sort === 'mcap' || state.sort === 'rank')) state.sort = 'implied';
+    if (state.group === 'live' && (state.sort === 'implied' || state.sort === 'age')) state.sort = 'mcap';
     if (state.dir !== 1 && state.dir !== -1) state.dir = -1;
+    if (state.sort === 'rank' && state.dir !== 1) state.dir = 1;
   }
   function syncHash() {
     var params = new URLSearchParams();
     if (state.q) params.set('q', state.q);
     if (state.category !== 'all') params.set('cat', state.category);
     if (state.chain !== 'all') params.set('chain', state.chain);
-    if (state.tab !== 'pre-token') params.set('tab', state.tab);
-    if (state.sort !== 'implied') params.set('sort', state.sort);
-    if (state.dir !== -1) params.set('dir', String(state.dir));
+    if (state.group !== 'pre-token') params.set('filter', state.group);
+    if (state.sort !== defaultSort(state.group)) params.set('sort', state.sort);
+    if (state.dir !== (state.sort === 'rank' ? 1 : -1)) params.set('dir', String(state.dir));
     if (state.watchOnly) params.set('watch', '1');
-    if (state.selected) params.set('p', state.selected);
+    if (state.selected) params.set('open', state.selected);
     var next = params.toString();
     try {
       window.history.replaceState(null, '', next ? '#' + next : '#');
@@ -156,18 +193,29 @@
 
   // ---------------------------------------------------------------- filtering and sorting
 
-  function filterList(list, live) {
+  function categoryMatches(row) {
+    if (state.category === 'all') return true;
+    return row.category_label === state.category || categoryOf(row) === state.category;
+  }
+  function groupMatches(row) {
+    if (state.group === 'all') return true;
+    return row.token_status === state.group;
+  }
+  function filterList(list) {
     var q = state.q.trim().toLowerCase();
     return list.filter(function (r) {
-      if (!live && state.watchOnly && !r.on_watchlist) return false;
-      if (state.category !== 'all' && categoryOf(r) !== state.category) return false;
+      if (!groupMatches(r)) return false;
+      if (state.watchOnly && !r.on_watchlist) return false;
+      if (!categoryMatches(r)) return false;
       if (state.chain !== 'all' && (r.chains || []).indexOf(state.chain) < 0) return false;
       if (!q) return true;
-      var hay = [r.name, r.slug, r.category || '', (r.chains || []).join(' ')].join(' ').toLowerCase();
+      var hay = [r.name, r.slug, r.category || '', r.category_label || '', (r.chains || []).join(' ')].join(' ').toLowerCase();
       return hay.indexOf(q) >= 0;
     });
   }
-  function valueFor(row, key, live) {
+  function valueFor(row, key) {
+    var live = row.token_status === 'live';
+    if (key === 'rank') return row.rank;
     if (key === 'name') return row.name.toLowerCase();
     if (key === 'category') return categoryOf(row).toLowerCase();
     if (key === 'chains') return (row.chains || []).length;
@@ -175,17 +223,17 @@
     if (key === 'growth') return row.change_7d;
     if (key === 'age') return row.age_days;
     if (key === 'mcap') return row.mcap_usd;
-    if (key === 'implied') return live ? (row.mcap_usd === null || row.mcap_usd === undefined ? row.tvl_usd : row.mcap_usd) : row.implied_value_usd;
-    return row.implied_value_usd;
+    if (key === 'implied') return live ? row.mcap_usd : row.implied_value_usd;
+    return live ? row.mcap_usd : row.implied_value_usd;
   }
   function bySlug(a, b) {
     return a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0;
   }
-  function sortRows(list, live) {
+  function sortRows(list) {
     var key = state.sort;
     return list.slice().sort(function (a, b) {
-      var av = valueFor(a, key, live);
-      var bv = valueFor(b, key, live);
+      var av = valueFor(a, key);
+      var bv = valueFor(b, key);
       var an = av === null || av === undefined;
       var bn = bv === null || bv === undefined;
       if (an && bn) return bySlug(a, b);
@@ -224,35 +272,35 @@
     );
   }
   function hero() {
-    var top = DATA.rows[0];
+    var top = null;
+    for (var i = 0; i < DATA.rows.length; i++) {
+      if (DATA.rows[i].token_status === 'pre-token') { top = DATA.rows[i]; break; }
+    }
     return el('section', { class: 'hero' },
       el('p', { class: 'eyebrow', text: 'DefiLlama protocol index · ' + DATA.watchlist_size + '-slug watchlist' }),
       el('h1', null, 'The protocols that ', el('em', null, 'have not'), ' launched a token yet.'),
       el('p', {
         class: 'lede',
-        text: 'Token Radar scores every pre-token protocol with one transparent function of TVL, seven-day growth, age without a token, chain reach, category and funding. The watchlist is the floor; the board ranks ' + DATA.board_size + ' protocols, including ' + DATA.early_size + ' the watchlist left out.'
+        text: 'Token Radar scores every pre-token protocol with one transparent function of TVL, seven-day growth, age without a token, chain reach and category. The watchlist is the floor; the board holds ' + DATA.board_pre_token_size + ' pre-token rows, including ' + DATA.early_size + ' the watchlist left out, beside ' + DATA.board_live_size + ' live-token rows that already trade.'
       }),
       el('div', { class: 'stats' },
         stat(DATA.protocols_scanned, 'Protocols scanned', 'DefiLlama index'),
-        stat(DATA.board_size, 'Pre-token ranked', DATA.pre_token_total + ' protocols with no token'),
-        stat(money(DATA.top_implied), 'Top implied value', top ? top.name : 'n/a'),
-        stat(DATA.watchlist_covered + '/' + DATA.watchlist_size, 'Watchlist covered', 'floor ' + money(DATA.floor_usd))
+        stat(DATA.board_pre_token_size, 'Pre-token', 'ranked by implied value'),
+        stat(DATA.board_live_size, 'Live token', 'market cap, trades now'),
+        stat(DATA.watchlist_covered + '/' + DATA.watchlist_size, 'Watchlist covered', top ? 'top ' + top.name : 'floor ' + money(DATA.floor_usd))
       )
     );
   }
 
-  function switchTab(tab) {
-    state.tab = tab;
+  function switchGroup(group) {
+    state.group = group;
     state.category = 'all';
     state.chain = 'all';
     state.watchOnly = false;
-    state.sort = tab === 'live' ? 'mcap' : 'implied';
-    state.dir = -1;
-    categorySelect.value = 'all';
-    chainSelect.value = 'all';
-    watchToggle.checked = false;
-    tabButtons.pre.setAttribute('aria-pressed', tab === 'pre-token' ? 'true' : 'false');
-    tabButtons.live.setAttribute('aria-pressed', tab === 'live' ? 'true' : 'false');
+    state.sort = defaultSort(group);
+    state.dir = state.sort === 'rank' ? 1 : -1;
+    updateControls();
+    updateChips();
     syncHash();
     renderBoard();
   }
@@ -261,12 +309,20 @@
     state.category = 'all';
     state.chain = 'all';
     state.watchOnly = false;
-    searchInput.value = '';
-    categorySelect.value = 'all';
-    chainSelect.value = 'all';
-    watchToggle.checked = false;
+    updateControls();
+    updateChips();
     syncHash();
     renderBoard();
+  }
+  function updateControls() {
+    if (searchInput) searchInput.value = state.q;
+    if (chainSelect) chainSelect.value = state.chain;
+    if (watchToggle) watchToggle.checked = state.watchOnly;
+    if (groupButtons) {
+      Object.keys(groupButtons).forEach(function (key) {
+        groupButtons[key].setAttribute('aria-pressed', state.group === key ? 'true' : 'false');
+      });
+    }
   }
 
   function toolbar() {
@@ -277,16 +333,6 @@
     });
     searchInput.addEventListener('input', function () {
       state.q = searchInput.value;
-      syncHash();
-      renderBoard();
-    });
-
-    categorySelect = el('select', { id: 'category', class: 'control', 'aria-label': 'Filter by category' });
-    categorySelect.appendChild(el('option', { value: 'all', text: 'All categories' }));
-    CATEGORIES.forEach(function (c) { categorySelect.appendChild(el('option', { value: c, text: c })); });
-    categorySelect.value = state.category;
-    categorySelect.addEventListener('change', function () {
-      state.category = categorySelect.value;
       syncHash();
       renderBoard();
     });
@@ -309,17 +355,17 @@
       renderBoard();
     });
 
-    var preBtn = el('button', {
-      type: 'button', class: 'seg-btn', text: 'Pre-token',
-      'aria-pressed': state.tab === 'pre-token' ? 'true' : 'false'
+    groupButtons = {};
+    var groupRow = el('div', { class: 'segmented' });
+    [['all', 'All'], ['pre-token', 'Pre-token'], ['live', 'Live']].forEach(function (pair) {
+      var button = el('button', {
+        type: 'button', class: 'seg-btn', text: pair[1],
+        'aria-pressed': state.group === pair[0] ? 'true' : 'false'
+      });
+      button.addEventListener('click', function () { switchGroup(pair[0]); });
+      groupButtons[pair[0]] = button;
+      groupRow.appendChild(button);
     });
-    var liveBtn = el('button', {
-      type: 'button', class: 'seg-btn', text: 'Live token',
-      'aria-pressed': state.tab === 'live' ? 'true' : 'false'
-    });
-    preBtn.addEventListener('click', function () { switchTab('pre-token'); });
-    liveBtn.addEventListener('click', function () { switchTab('live'); });
-    tabButtons = { pre: preBtn, live: liveBtn };
 
     countEl = el('span', { class: 'result-count', 'aria-live': 'polite' });
 
@@ -327,10 +373,6 @@
       el('div', { class: 'field field-search' },
         el('label', { for: 'search', text: 'Search' }),
         searchInput
-      ),
-      el('div', { class: 'field' },
-        el('label', { for: 'category', text: 'Category' }),
-        categorySelect
       ),
       el('div', { class: 'field' },
         el('label', { for: 'chain', text: 'Chain' }),
@@ -341,14 +383,64 @@
         el('label', { class: 'check', for: 'watch' }, watchToggle, el('span', { text: 'Watchlist only' }))
       ),
       el('div', { class: 'field' },
-        el('span', { class: 'field-label', text: 'Token status' }),
-        el('div', { class: 'segmented' }, preBtn, liveBtn)
+        el('span', { class: 'field-label', text: 'Group' }),
+        groupRow
       ),
       el('div', { class: 'toolbar-tail' },
         countEl,
         el('button', { type: 'button', class: 'reset', text: 'Reset', onclick: resetFilters })
       )
     );
+  }
+
+  // ---------------------------------------------------------------- category chips
+
+  function sourceForGroup() {
+    return (DATA.rows || []).filter(groupMatches);
+  }
+  function countFor(value) {
+    var source = sourceForGroup();
+    if (value === 'all') return source.length;
+    var n = 0;
+    source.forEach(function (r) {
+      if (r.category_label === value || categoryOf(r) === value) n++;
+    });
+    return n;
+  }
+  function chipButton(text, value) {
+    var button = el('button', {
+      type: 'button', class: 'cat-chip', 'data-cat': value,
+      'aria-pressed': state.category === value ? 'true' : 'false'
+    },
+      el('span', { class: 'cat-chip-label', text: text }),
+      el('b', { class: 'cat-chip-count', text: String(countFor(value)) })
+    );
+    button.addEventListener('click', function () {
+      state.category = state.category === value ? 'all' : value;
+      updateChips();
+      syncHash();
+      renderBoard();
+    });
+    return button;
+  }
+  function categoryChips() {
+    chipBar = el('div', { class: 'chip-row', role: 'group', 'aria-label': 'Category filters' });
+    chipBar.appendChild(chipButton('All categories', 'all'));
+    CATEGORY_LABELS.forEach(function (label) { chipBar.appendChild(chipButton(label, label)); });
+    return el('section', { class: 'chip-bar', 'aria-label': 'Category filters' },
+      el('span', { class: 'chip-label', text: 'Category' }),
+      chipBar
+    );
+  }
+  function updateChips() {
+    if (!chipBar) return;
+    var buttons = chipBar.querySelectorAll('.cat-chip');
+    for (var i = 0; i < buttons.length; i++) {
+      var value = buttons[i].getAttribute('data-cat');
+      buttons[i].setAttribute('aria-pressed', state.category === value ? 'true' : 'false');
+      var count = buttons[i].querySelector('.cat-chip-count');
+      if (count) count.textContent = String(countFor(value));
+    }
   }
 
   // ---------------------------------------------------------------- table
@@ -362,11 +454,15 @@
   function sortTh(key, label, cls) {
     var active = state.sort === key;
     var th = el('th', {
-      scope: 'col', class: cls,
+      scope: 'col', class: cls + ' sortable',
       'aria-sort': active ? (state.dir === 1 ? 'ascending' : 'descending') : 'none'
     });
     var button = el('button', { type: 'button', class: 'sort-btn' }, label);
-    if (active) button.appendChild(el('span', { class: 'sort-arrow', 'aria-hidden': 'true', text: state.dir === 1 ? '↑' : '↓' }));
+    button.appendChild(el('span', {
+      class: 'sort-arrow' + (active ? ' is-active' : ''),
+      'aria-hidden': 'true',
+      text: active ? (state.dir === 1 ? '↑' : '↓') : '↕'
+    }));
     button.addEventListener('click', function () {
       if (state.sort === key) {
         state.dir = -state.dir;
@@ -397,93 +493,59 @@
     return tr;
   }
 
-  function preTokenTable(list) {
+  function boardTable(list) {
     var tbody = el('tbody');
     var top = DATA.top_implied || 1;
     list.forEach(function (row) {
+      var live = row.token_status === 'live';
       var tr = interactiveRow(row);
       tr.appendChild(el('td', { class: 'col-rank rank', text: String(row.rank) }));
       tr.appendChild(el('td', { class: 'col-proto' },
         el('div', { class: 'proto' },
           el('div', { class: 'proto-name' },
             el('b', { text: row.name }),
-            row.on_watchlist ? el('span', { class: 'watch-tag', title: 'On the house watchlist', text: 'watchlist' }) : null
+            live ? el('span', { class: 'watch-tag', title: 'This token already trades', text: row.symbol || 'live' })
+              : row.on_watchlist ? el('span', { class: 'watch-tag', title: 'On the house watchlist', text: 'watchlist' }) : null
           ),
           el('span', { class: 'proto-slug', text: row.slug })
         )
       ));
-      tr.appendChild(el('td', { class: 'col-cat' }, el('span', { class: 'tag', text: categoryOf(row) })));
+      tr.appendChild(el('td', { class: 'col-cat' }, el('span', { class: 'tag', title: row.category_label, text: categoryOf(row) })));
       tr.appendChild(el('td', { class: 'col-chains' }, el('span', { class: 'chains', text: chainSummary(row.chains) })));
-      tr.appendChild(el('td', { class: 'col-implied' },
-        el('div', { class: 'implied-cell' },
-          el('div', { class: 'bar', 'aria-hidden': 'true' },
-            el('i', { style: 'width:' + Math.min(100, Math.max(4, Math.round((row.implied_value_usd / top) * 100))) + '%' })
-          ),
-          el('strong', { class: 'money', text: money(row.implied_value_usd) })
-        )
-      ));
+      if (live) {
+        tr.appendChild(el('td', { class: 'col-implied' }, el('span', { class: 'status-live', text: 'trades now' })));
+      } else {
+        tr.appendChild(el('td', { class: 'col-implied' },
+          el('div', { class: 'implied-cell' },
+            el('div', { class: 'bar', 'aria-hidden': 'true' },
+              el('i', { style: 'width:' + Math.min(100, Math.max(4, Math.round((row.implied_value_usd / top) * 100))) + '%' })
+            ),
+            el('strong', { class: 'money', text: money(row.implied_value_usd) })
+          )
+        ));
+      }
       tr.appendChild(el('td', { class: 'col-tvl num', text: money(row.tvl_usd) }));
       tr.appendChild(el('td', { class: 'col-growth num ' + growthClass(row.change_7d), text: pct(row.change_7d) }));
-      tr.appendChild(el('td', { class: 'col-age', text: ageText(row.age_days) }));
+      tr.appendChild(el('td', { class: 'col-age', text: live ? 'trades' : ageText(row.age_days) }));
+      tr.appendChild(el('td', { class: 'col-mcap num', text: live ? money(row.mcap_usd) : '—' }));
       tbody.appendChild(tr);
     });
 
     return el('div', { class: 'panel-inner' },
-      panelHead('Pre-token board', 'Ranked by implied value. Select any row for the value breakdown, the "why this value" sentence and a four-step farm plan.'),
+      panelHead('Token board', 'Pre-token protocols are ranked by implied value; live-token protocols show their market cap and trade now. Select any row for details.'),
       el('div', { class: 'table-wrap' },
         el('table', null,
-          el('caption', { class: 'sr-only', text: 'Pre-token protocols ranked by implied value' }),
+          el('caption', { class: 'sr-only', text: 'Pre-token protocols ranked by implied value beside live-token protocols with their market cap' }),
           el('thead', null, el('tr', null,
-            el('th', { scope: 'col', class: 'col-rank', text: '#' }),
+            sortTh('rank', '#', 'col-rank'),
             sortTh('name', 'Protocol', 'col-proto'),
             sortTh('category', 'Category', 'col-cat'),
             sortTh('chains', 'Chains', 'col-chains'),
             sortTh('implied', 'Implied value', 'col-implied'),
             sortTh('tvl', 'TVL', 'col-tvl'),
             sortTh('growth', '7d', 'col-growth'),
-            sortTh('age', 'Age without token', 'col-age')
-          )),
-          tbody
-        )
-      )
-    );
-  }
-
-  function liveTable(list) {
-    var tbody = el('tbody');
-    list.forEach(function (row) {
-      var tr = interactiveRow(row);
-      tr.appendChild(el('td', { class: 'col-proto' },
-        el('div', { class: 'proto' },
-          el('div', { class: 'proto-name' },
-            el('b', { text: row.name }),
-            row.symbol ? el('span', { class: 'watch-tag', text: row.symbol }) : null
-          ),
-          el('span', { class: 'proto-slug', text: row.slug })
-        )
-      ));
-      tr.appendChild(el('td', { class: 'col-cat' }, el('span', { class: 'tag', text: categoryOf(row) })));
-      tr.appendChild(el('td', { class: 'col-chains' }, el('span', { class: 'chains', text: chainSummary(row.chains) })));
-      tr.appendChild(el('td', { class: 'col-tvl num', text: money(row.tvl_usd) }));
-      tr.appendChild(el('td', { class: 'col-growth num ' + growthClass(row.change_7d), text: pct(row.change_7d) }));
-      tr.appendChild(el('td', { class: 'col-mcap num', text: money(row.mcap_usd) }));
-      tr.appendChild(el('td', null, el('span', { class: 'status-live', text: 'trades now' })));
-      tbody.appendChild(tr);
-    });
-
-    return el('div', { class: 'panel-inner' },
-      panelHead('Live token market', 'These protocols already trade, so their market cap is shown as a fact, not a model. They are kept out of the pre-token ranking.'),
-      el('div', { class: 'table-wrap' },
-        el('table', null,
-          el('caption', { class: 'sr-only', text: 'Live-token protocols by market cap' }),
-          el('thead', null, el('tr', null,
-            sortTh('name', 'Protocol', 'col-proto'),
-            sortTh('category', 'Category', 'col-cat'),
-            sortTh('chains', 'Chains', 'col-chains'),
-            sortTh('tvl', 'TVL', 'col-tvl'),
-            sortTh('growth', '7d', 'col-growth'),
-            sortTh('mcap', 'Market cap', 'col-mcap'),
-            el('th', { scope: 'col' }, el('span', { class: 'sr-only', text: 'Status' }))
+            sortTh('age', 'Age / status', 'col-age'),
+            sortTh('mcap', 'Market cap', 'col-mcap')
           )),
           tbody
         )
@@ -501,23 +563,25 @@
 
   function renderBoard() {
     boardMount.textContent = '';
-    var isLive = state.tab === 'live';
-    var source = isLive ? DATA.live : DATA.rows;
-    var list = sortRows(filterList(source, isLive), isLive);
-    updateCount(list.length, isLive);
+    var list = sortRows(filterList(DATA.rows || []));
+    updateCount(list.length);
     if (list.length === 0) {
       boardMount.appendChild(emptyState());
       return;
     }
-    boardMount.appendChild(isLive ? liveTable(list) : preTokenTable(list));
+    boardMount.appendChild(boardTable(list));
   }
-  function updateCount(shown, isLive) {
+  function updateCount(shown) {
     if (!countEl) return;
-    countEl.textContent = shown + ' shown · ' + (isLive ? DATA.live_size + ' live-token' : DATA.board_size + ' ranked');
+    countEl.textContent = shown + ' shown · ' + DATA.board_pre_token_size + ' pre-token · ' + DATA.board_live_size + ' live';
   }
 
   // ---------------------------------------------------------------- method
 
+  function categoryRange() {
+    var values = Object.keys(DATA.weights.category).map(function (k) { return DATA.weights.category[k]; });
+    return Math.min.apply(null, values).toFixed(2) + '–' + Math.max.apply(null, values).toFixed(2) + '×';
+  }
   function weightChip(label, weight, fallback) {
     return el('div', { class: 'weight' + (fallback ? ' weight-default' : '') },
       el('span', { class: 'weight-label', text: label }),
@@ -531,14 +595,13 @@
     );
   }
   function methodPanel() {
-    var m = DATA.model;
+    var w = DATA.weights;
     var formula = [
       'implied = TVL',
-      '        × category weight',
-      '        × (1 + clamp(7d growth, ' + m.growth_floor + '%, +' + m.growth_cap + '%) × ' + m.growth_weight + ')',
-      '        × (' + m.age_floor.toFixed(2) + ' + min(age days, ' + m.age_full_days + ') ÷ ' + m.age_full_days + ' × ' + m.age_range.toFixed(2) + ')',
-      '        × (1 + min(chains, ' + m.chain_cap + ') × ' + m.chain_step + ')',
-      '        × (1 + min(funding ÷ ' + money(m.funding_full_usd) + ', 1) × ' + m.funding_weight + ')'
+      '        × category multiple (' + categoryRange() + ')',
+      '        × (1 + clamp(7d, −' + w.growth.capPct + '%, +' + w.growth.capPct + '%) × ' + w.growth.perPct + ')',
+      '        × (' + w.age.floor.toFixed(2) + ' + min(age days, ' + w.age.fullDays + ') ÷ ' + w.age.fullDays + ' × ' + w.age.range.toFixed(2) + ')',
+      '        × (1 + min(chains, ' + w.chain.cap + ') × ' + w.chain.step + ')'
     ].join('\n');
     var weights = el('div', { class: 'weights' });
     DATA.category_rules.forEach(function (rule) { weights.appendChild(weightChip(rule.label, rule.weight, false)); });
@@ -547,10 +610,10 @@
     return el('section', { class: 'method', id: 'method' },
       el('div', { class: 'method-head' },
         el('p', { class: 'eyebrow', text: 'The model' }),
-        el('h2', { text: 'One transparent function, no names hardcoded' }),
+        el('h2', { text: 'One transparent four-factor function, no names hardcoded' }),
         el('p', {
           class: 'lede small',
-          text: 'Every pre-token row is scored from the snapshot\u2019s own figures: TVL, seven-day growth, age without a token, chain count, category and, when present, disclosed funding. The watchlist is the coverage floor; the board also ranks ' + DATA.early_size + ' pre-token protocols the watchlist left out. Live-token protocols are held apart.'
+          text: 'Every pre-token row is scored from the snapshot\u2019s own figures: TVL, seven-day growth, age without a token, chain count and category. The watchlist is the coverage floor; the board also ranks ' + DATA.early_size + ' pre-token protocols the watchlist left out. Live-token rows sit on the same board with the market cap they state and never an implied value.'
         })
       ),
       el('div', { class: 'method-grid' },
@@ -559,16 +622,16 @@
           el('pre', { class: 'formula', text: formula })
         ),
         el('div', { class: 'weights-card' },
-          el('h3', { text: 'Category weight table' }),
-          el('p', { class: 'detail-sub', text: 'Categories are matched by keyword; the first match wins. An unmapped category uses ' + DATA.default_category.weight.toFixed(2) + '×.' }),
+          el('h3', { text: 'Category multiple table' }),
+          el('p', { class: 'detail-sub', text: 'Categories are matched by keyword at word boundaries; the first match wins. An unmapped category uses ' + DATA.default_category.weight.toFixed(2) + '×.' }),
           weights
         )
       ),
       el('div', { class: 'model-notes' },
-        note('Growth', 'Seven-day TVL growth is clamped to ' + m.growth_floor + '%..+' + m.growth_cap + '% and multiplied by ' + m.growth_weight + ', so momentum matters without letting one outlier week take over.'),
-        note('Age', 'Days since DefiLlama first listed the protocol, the best record of how long it has run with no token. The multiplier rises from ' + m.age_floor.toFixed(2) + '× to ' + (m.age_floor + m.age_range).toFixed(2) + '× over ' + m.age_full_days + ' days; an unlisted age uses ' + m.unknown_age_days + ' days.'),
-        note('Reach', 'Each chain adds ' + m.chain_step + '× up to ' + m.chain_cap + ' chains; multi-chain protocols reach more users and more farm surfaces.'),
-        note('Funding', 'When a snapshot carries disclosed funding, up to ' + money(m.funding_full_usd) + ' adds ' + m.funding_weight + '× as a launch tailwind. This snapshot carries none, so every row uses 1.00×.')
+        note('Growth', 'Seven-day TVL growth is capped at ' + w.growth.capPct + '% in either direction, then scaled by ' + w.growth.perPct + ' per point. The factor therefore runs from ' + (1 - w.growth.capPct * w.growth.perPct).toFixed(2) + '× to ' + (1 + w.growth.capPct * w.growth.perPct).toFixed(2) + '×, so one outlier week cannot dominate.'),
+        note('Age', 'Days since DefiLlama first listed the protocol, the snapshot\u2019s record of operation without a token. The factor rises from ' + w.age.floor.toFixed(2) + '× to ' + (w.age.floor + w.age.range).toFixed(2) + '× over ' + w.age.fullDays + ' days and then saturates; an unlisted age uses ' + w.age.unknownDays + ' days.'),
+        note('Reach', 'Each chain adds ' + w.chain.step + '× up to ' + w.chain.cap + ' chains. The premium is deliberately small and bounded: reach matters, but it cannot outrank a weak category.'),
+        note('Funding', 'This snapshot carries no disclosed funding, so no funding factor is applied. When a snapshot does carry it, the row records it beside the four factors rather than hiding it in the score.')
       )
     );
   }
@@ -605,10 +668,7 @@
   }
   function findProtocol(slug) {
     for (var i = 0; i < DATA.rows.length; i++) {
-      if (DATA.rows[i].slug === slug) return { row: DATA.rows[i], live: false };
-    }
-    for (var j = 0; j < DATA.live.length; j++) {
-      if (DATA.live[j].slug === slug) return { row: DATA.live[j], live: true };
+      if (DATA.rows[i].slug === slug) return { row: DATA.rows[i], live: DATA.rows[i].token_status === 'live' };
     }
     return null;
   }
@@ -642,43 +702,77 @@
       el('button', { type: 'button', class: 'icon-btn', text: 'Close', onclick: function () { dialog.close(); } })
     );
   }
+  function maxCategory() {
+    var c = DATA.weights.category;
+    var max = 0;
+    Object.keys(c).forEach(function (k) { if (c[k] > max) max = c[k]; });
+    return max || 1;
+  }
+  function maxGrowth() {
+    var g = DATA.weights.growth;
+    return 1 + g.capPct * g.perPct;
+  }
+  function maxAge() {
+    var a = DATA.weights.age;
+    return a.floor + a.range;
+  }
+  function maxChain() {
+    var c = DATA.weights.chain;
+    return 1 + c.cap * c.step;
+  }
+  function factorLine(factor, max) {
+    var multiplier = factor && isFinite(factor.multiplier) ? factor.multiplier : 0;
+    var pct = Math.max(2, Math.min(100, Math.round((multiplier / (max || 1)) * 100)));
+    return el('div', { class: 'factor-row' },
+      el('div', { class: 'factor-head' },
+        el('span', { class: 'factor-label', text: factor ? factor.label : 'Factor' }),
+        el('span', { class: 'factor-value', text: '×' + multiplier.toFixed(3) })
+      ),
+      el('div', {
+        class: 'factor-track',
+        role: 'img',
+        'aria-label': (factor ? factor.label : 'Factor') + ' multiplier ' + multiplier.toFixed(3)
+      }, el('i', { class: 'factor-fill', style: 'width:' + pct + '%' })),
+      el('span', { class: 'factor-detail', text: factor ? factor.detail : '' })
+    );
+  }
   function breakdownPanel(row) {
-    var box = el('div', { class: 'breakdown' });
-    (row.breakdown || []).forEach(function (item) {
-      box.appendChild(el('div', { class: 'breakdown-row' },
-        el('span', { class: 'factor', text: item.factor }),
-        el('span', { class: 'detail-text', text: item.detail }),
-        el('span', { class: 'mult', text: item.multiplier === null || item.multiplier === undefined ? 'n/a' : '×' + item.multiplier.toFixed(3) })
-      ));
-    });
-    box.appendChild(el('div', { class: 'breakdown-row total' },
-      el('span', { class: 'factor', text: 'Implied value' }),
-      el('span', { class: 'detail-text', text: DATA.model_version + ' · deterministic' }),
-      el('span', { class: 'mult', text: money(row.implied_value_usd) })
-    ));
+    var b = row.breakdown || {};
+    var box = el('div', { class: 'factor-list' });
+    box.appendChild(factorLine(b.category, maxCategory()));
+    box.appendChild(factorLine(b.growth, maxGrowth()));
+    box.appendChild(factorLine(b.age, maxAge()));
+    box.appendChild(factorLine(b.chain, maxChain()));
     return el('section', { class: 'detail-section' },
       el('h3', { text: 'Value breakdown' }),
+      el('p', { class: 'detail-sub', text: 'Each bar is the factor against its own maximum.' }),
       box
     );
   }
   function farmPanel(row) {
-    var list = el('ol', { class: 'plan' });
+    var tbody = el('tbody');
     (row.farm_plan || []).forEach(function (step, index) {
-      list.appendChild(el('li', { class: 'plan-step' },
-        el('span', { class: 'plan-num', text: String(index + 1) }),
-        el('div', { class: 'plan-body' },
-          el('p', { class: 'plan-action', text: step.action }),
-          el('div', { class: 'chips' },
-            el('span', { class: 'chip chip-cost', text: 'Cost · ' + step.cost }),
-            el('span', { class: 'chip chip-time', text: 'Time · ' + step.time })
-          )
-        )
+      tbody.appendChild(el('tr', null,
+        el('td', { class: 'plan-index', text: String(index + 1) }),
+        el('td', { class: 'plan-action-cell', text: step.action }),
+        el('td', { class: 'plan-cost', text: stepCost(step) }),
+        el('td', { class: 'plan-time', text: stepTime(step) })
       ));
     });
     return el('section', { class: 'detail-section' },
       el('h3', { text: 'Farm plan' }),
-      el('p', { class: 'detail-sub', text: 'Four concrete steps for ' + (row.category || 'this category') + ' on ' + ((row.chains || [])[0] || 'its main chain') + '. Costs are estimates in USD.' }),
-      list
+      el('p', { class: 'detail-sub', text: 'Four concrete steps for ' + (row.category || 'this category') + ' on ' + ((row.chains || [])[0] || 'its main chain') + '. Cost is out-of-pocket USD; time is in minutes.' }),
+      el('div', { class: 'plan-wrap' },
+        el('table', { class: 'plan-table' },
+          el('thead', null, el('tr', null,
+            el('th', { scope: 'col', class: 'plan-index', text: '#' }),
+            el('th', { scope: 'col', text: 'Action' }),
+            el('th', { scope: 'col', class: 'plan-cost', text: 'Cost' }),
+            el('th', { scope: 'col', class: 'plan-time', text: 'Time' })
+          )),
+          tbody
+        )
+      )
     );
   }
 
@@ -707,17 +801,22 @@
         fact('First listed', ageText(row.age_days))
       ));
       inner.appendChild(el('section', { class: 'detail-section' },
+        el('h3', { text: 'Chains' }),
+        el('p', { class: 'detail-sub', text: 'Every chain the snapshot records TVL on for ' + row.name + '.' }),
+        el('div', { class: 'chips' }, (row.chains && row.chains.length) ? row.chains.map(function (c) { return chip(c); }) : [chip('No chain recorded')])
+      ));
+      inner.appendChild(el('section', { class: 'detail-section' },
         el('h3', { text: 'Why there is no implied value' }),
         el('p', {
           class: 'why',
-          text: 'This protocol records a live token, so the market already prices it. Token Radar keeps live-token protocols strictly apart from the pre-token ranking and shows their market cap as a fact instead of running the implied-value model on them.'
+          text: 'This protocol records a live token, so the market already prices it. Token Radar shows the market cap and chain list as facts and does not run the implied-value model on it.'
         })
       ));
     } else {
       inner.appendChild(el('div', { class: 'detail-implied' },
         el('span', { class: 'eyebrow', text: 'Implied value' }),
         el('strong', { class: 'big-money', text: money(row.implied_value_usd) }),
-        el('span', { class: 'detail-sub', text: 'base ' + money(row.base_usd) + ' after the ' + row.category_label + ' weight' })
+        el('span', { class: 'detail-sub', text: 'base ' + money(row.base_usd) + ' after the ' + row.category_label + ' multiple' })
       ));
       inner.appendChild(el('div', { class: 'detail-facts' },
         fact('TVL', money(row.tvl_usd)),
@@ -728,7 +827,7 @@
       inner.appendChild(breakdownPanel(row));
       inner.appendChild(el('section', { class: 'detail-section' },
         el('h3', { text: 'Why this value' }),
-        el('p', { class: 'why', text: row.explanation })
+        el('p', { class: 'why', text: (row.breakdown && row.breakdown.why) || row.explanation })
       ));
       inner.appendChild(farmPanel(row));
     }
@@ -758,6 +857,7 @@
     shell.appendChild(masthead());
     shell.appendChild(hero());
     shell.appendChild(toolbar());
+    shell.appendChild(categoryChips());
     boardMount = el('section', { class: 'panel board-panel', id: 'board', tabindex: '-1' });
     shell.appendChild(boardMount);
     shell.appendChild(methodPanel());
@@ -766,6 +866,7 @@
     root.setAttribute('aria-busy', 'false');
 
     renderBoard();
+    updateChips();
     syncHash();
     if (state.selected) openDialog(state.selected);
   }
