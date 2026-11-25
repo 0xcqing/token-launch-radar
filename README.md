@@ -126,3 +126,9 @@ dashboard/app.js        sorting, filtering, detail drawer, live-token view
 screenshots/            board, detail and filtered views
 vendor/makefun-board.ts the sealed dossier library (unmodified)
 ```
+
+[![make.fun · token-radar-01](https://make.fun/badge/token-radar-01.svg)](https://make.fun/bounty/token-radar-01?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
+[![rank](https://make.fun/badge/token-radar-01/0xcqing/token-launch-radar/rank.svg)](https://make.fun/bounty/token-radar-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
+[![reward](https://make.fun/badge/token-radar-01/0xcqing/token-launch-radar/reward.svg)](https://make.fun/bounty/token-radar-01?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
+
+Bounty: https://make.fun/bounty/token-radar-01
