@@ -1,9 +1,10 @@
 // Token Radar, a working token-radar-01 entry (Node 22+, standard library only).
 //
 // Reads the sealed snapshot from --input <snapshot.json|directory> (default /input), scores every
-// pre-token protocol with lib/model.ts, and writes:
+// pre-token protocol with lib/model.ts, keeps the live-token protocols on the same board with the
+// market cap they state, and writes:
 //
-//   out/board.json       {"rows": [...]} the ranked pre-token board
+//   out/board.json       {"rows": [...]} the ranked board, pre-token and live rows
 //   out/data.js          window.RADAR, the dashboard's whole dataset (no fetch, no network)
 //   out/dashboard/       the static page (index.html, app.js, app.css)
 //   out/screenshots/     the repository's screenshots, at least three, names safe for the dossier
@@ -110,10 +111,10 @@ writeFileSync(
   }),
 );
 
-const top = radar.rows[0];
+const top = radar.rows.find((r) => r.token_status === 'pre-token');
 process.stdout.write(
-  `token radar: snapshot ${snapshot.as_of} — ${snapshot.protocols.length} protocols scanned, ${radar.pre_token_total} pre-token, ${radar.watchlist_covered}/${radar.watchlist_size} watchlist slugs covered\n` +
-    `token radar: ranked ${radar.board_size} pre-token rows (${radar.early_size} beyond the watchlist; ${radar.live_size} live-token protocols set aside), model ${radar.model_version}\n` +
-    `token radar: top implied value ${money(radar.top_implied)}${top === undefined ? '' : ` (${top.name})`}\n` +
+  `token radar: snapshot ${snapshot.as_of} — ${snapshot.protocols.length} protocols scanned, ${radar.pre_token_total} with no token recorded, ${radar.watchlist_covered}/${radar.watchlist_size} watchlist slugs covered\n` +
+    `token radar: ranked ${radar.board_pre_token_size} pre-token rows (${radar.early_size} beyond the watchlist) and ${radar.board_live_size} live-token rows (${radar.board_size} total), model ${radar.model_version}\n` +
+    `token radar: top pre-token implied value ${money(radar.top_implied)}${top === undefined ? '' : ` (${top.name})`}\n` +
     `token radar: wrote ${join(out, 'board.json')}, ${join(out, 'data.js')}, ${join(out, 'dashboard')} (${dashboardFiles.length} files), ${join(out, 'screenshots')} (${shots.length} images) and ${join(out, 'dossier.json')}\n`,
 );
